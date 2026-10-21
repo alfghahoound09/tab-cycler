@@ -1,5 +1,6 @@
 const $ = (s) => document.querySelector(s);
-const DEF_CONFIG = { items: [], loop: true, autoPause: true };
+// timeMode: 'each' = thời gian riêng từng tab, 'all' = dùng chung globalMin/globalSec cho mọi tab.
+const DEF_CONFIG = { items: [], loop: true, autoPause: true, timeMode: 'each', globalMin: 0, globalSec: 30 };
 
 let config = { ...DEF_CONFIG };
 let run = { running: false, paused: false, index: -1, nextAt: 0, remainingMs: 0, status: '' };
@@ -30,6 +31,15 @@ const fmt = (s) => {
 const dwellSec = (it) => {
   if (it.min != null || it.sec != null) return Math.max(1, (Number(it.min) || 0) * 60 + (Number(it.sec) || 0));
   return Math.max(1, Number(it.value) || 1) * (it.unit === 'min' ? 60 : 1);
+};
+// Thời gian thực tế áp dụng cho tab (theo chế độ hiện tại).
+const effSec = (it) => config.timeMode === 'all'
+  ? Math.max(1, (Number(config.globalMin) || 0) * 60 + (Number(config.globalSec) || 0))
+  : dwellSec(it);
+// Chuẩn hóa phút + giây: 0p 90s -> 1p 30s; tối thiểu 1 giây.
+const normTime = (m, s) => {
+  const total = Math.max(1, Math.max(0, Math.floor(Number(m) || 0)) * 60 + Math.max(0, Math.floor(Number(s) || 0)));
+  return { min: Math.floor(total / 60), sec: total % 60 };
 };
 
 async function load() {
@@ -72,16 +82,18 @@ function renderSeq() {
     const minIn = h('input', { type: 'number', min: 0, value: Math.floor(cur / 60), class: 'num', title: 'Phút' });
     const secIn = h('input', { type: 'number', min: 0, value: cur % 60, class: 'num', title: 'Giây' });
     const onTime = () => {
-      // Chuẩn hóa: 0p 90s -> 1p 30s; tối thiểu 1 giây.
-      const total = Math.max(1, Math.max(0, Math.floor(Number(minIn.value) || 0)) * 60 + Math.max(0, Math.floor(Number(secIn.value) || 0)));
-      it.min = Math.floor(total / 60);
-      it.sec = total % 60;
+      const t = normTime(minIn.value, secIn.value);
+      it.min = t.min;
+      it.sec = t.sec;
       delete it.value; delete it.unit;
       minIn.value = it.min; secIn.value = it.sec;
       saveConfig(); renderTotal();
     };
     minIn.addEventListener('change', onTime);
     secIn.addEventListener('change', onTime);
+    const timeEls = config.timeMode === 'all'
+      ? [h('span', { class: 'hint', textContent: `Dừng ${fmt(effSec(it))} (chung)` })]
+      : [h('span', { class: 'hint', textContent: 'Dừng' }), minIn, h('span', { class: 'hint', textContent: 'phút' }), secIn, h('span', { class: 'hint', textContent: 'giây' })];
 
     const chk = h('input', { type: 'checkbox', checked: !!it.clickEnabled });
     chk.addEventListener('change', () => { it.clickEnabled = chk.checked; saveConfig(); });
@@ -105,7 +117,7 @@ function renderSeq() {
         h('button', { class: 'ic', textContent: '✕', title: 'Xóa khỏi chuỗi', onclick: () => removeItem(i) }),
       ),
       h('div', { class: 'bot' },
-        h('span', { class: 'hint', textContent: 'Dừng' }), minIn, h('span', { class: 'hint', textContent: 'phút' }), secIn, h('span', { class: 'hint', textContent: 'giây' }),
+        ...timeEls,
         h('label', {}, chk, 'Nhấp'), pickBtn, hint,
       ),
     ));
@@ -125,7 +137,7 @@ function renderAvail() {
 }
 
 function renderTotal() {
-  const sum = config.items.reduce((s, it) => s + dwellSec(it), 0);
+  const sum = config.items.reduce((s, it) => s + effSec(it), 0);
   $('#total').textContent = config.items.length
     ? `Tổng một vòng ≈ ${fmt(sum)} — mỗi tab được nhấp 1 lần mỗi vòng, nên giữ con số này nhỏ hơn thời gian timeout của trang.`
     : '';
@@ -148,7 +160,16 @@ function renderStatus() {
   $('#note').textContent = run.running ? run.status || '' : '';
 }
 
-function render() { renderSeq(); renderAvail(); renderTotal(); renderStatus(); }
+function renderMode() {
+  const all = config.timeMode === 'all';
+  $('#modeEach').checked = !all;
+  $('#modeAll').checked = all;
+  $('#globalBox').hidden = !all;
+  $('#gMin').value = Number(config.globalMin) || 0;
+  $('#gSec').value = Number(config.globalSec) || 0;
+}
+
+function render() { renderMode(); renderSeq(); renderAvail(); renderTotal(); renderStatus(); }
 
 $('#start').onclick = () => cmd('start');
 $('#pause').onclick = () => cmd(run.paused ? 'resume' : 'pause');
@@ -157,6 +178,18 @@ $('#prev').onclick = () => cmd('prev');
 $('#next').onclick = () => cmd('next');
 $('#loop').onchange = (e) => { config.loop = e.target.checked; saveConfig(); };
 $('#autoPause').onchange = (e) => { config.autoPause = e.target.checked; saveConfig(); };
+
+const onModeChange = (e) => { config.timeMode = e.target.value; saveConfig(); render(); };
+$('#modeEach').onchange = onModeChange;
+$('#modeAll').onchange = onModeChange;
+const onGlobalTime = () => {
+  const t = normTime($('#gMin').value, $('#gSec').value);
+  config.globalMin = t.min;
+  config.globalSec = t.sec;
+  saveConfig(); render();
+};
+$('#gMin').onchange = onGlobalTime;
+$('#gSec').onchange = onGlobalTime;
 
 chrome.storage.onChanged.addListener((ch, area) => {
   if (area !== 'local') return;
