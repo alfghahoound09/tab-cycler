@@ -40,6 +40,10 @@
   .avail { display:flex; align-items:center; gap:6px; padding: 4px 0; border-bottom: 1px solid var(--line); }
   #msg { color: var(--danger); margin-top: 8px; }
   .foot { color: var(--muted); font-size: 11px; margin-top: 10px; }
+  .mode { display:flex; align-items:center; gap:10px; flex-wrap: wrap; padding: 8px; margin-bottom: 8px; border: 1px dashed var(--line); border-radius: 8px; }
+  .mode .lbl { color: var(--muted); font-size: 12px; }
+  #globalBox { display:inline-flex; align-items:center; gap:6px; }
+  #globalBox[hidden] { display: none; }
 </style>
 </head>
 <body>
@@ -55,6 +59,15 @@
   </div>
 
   <h2>Chuỗi chạy</h2>
+  <div class="mode">
+    <span class="lbl">Thời gian dừng:</span>
+    <label><input type="radio" name="timeMode" id="modeEach" value="each"> Riêng từng tab</label>
+    <label><input type="radio" name="timeMode" id="modeAll" value="all"> Chung cho tất cả</label>
+    <span id="globalBox" hidden>
+      <input type="number" id="gMin" class="num" min="0" title="Phút"> <span class="hint">phút</span>
+      <input type="number" id="gSec" class="num" min="0" title="Giây"> <span class="hint">giây</span>
+    </span>
+  </div>
   <div id="seq"></div>
   <div class="opts">
     <label><input type="checkbox" id="loop"> Lặp lại vòng</label>
