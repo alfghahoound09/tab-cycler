@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Tab Cycler",
+  "version": "1.0.0",
+  "description": "Tự động chuyển tab, nhấp thật vào điểm đã chọn và dừng theo thời gian riêng của từng tab.",
+  "minimum_chrome_version": "116",
+  "permissions": ["tabs", "storage", "alarms", "offscreen", "scripting", "debugger"],
+  "host_permissions": ["<all_urls>"],
+  "background": { "service_worker": "background.js" },
+  "action": { "default_popup": "popup.html", "default_title": "Tab Cycler" },
+  "commands": {
+    "toggle-pause": {
+      "suggested_key": { "default": "Alt+Shift+P" },
+      "description": "Bắt đầu / Tạm dừng / Tiếp tục"
+    },
+    "stop-all": {
+      "suggested_key": { "default": "Alt+Shift+X" },
+      "description": "Dừng hẳn"
+    }
+  }
+}
