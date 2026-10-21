@@ -1,7 +1,7 @@
 // ===== Tab Cycler - background (service worker) =====
 // Trạng thái lưu hoàn toàn trong chrome.storage.local vì service worker có thể bị tắt bất cứ lúc nào.
 
-const DEF_CONFIG = { items: [], loop: true, autoPause: true };
+const DEF_CONFIG = { items: [], loop: true, autoPause: true, timeMode: 'each', globalMin: 0, globalSec: 30 };
 const DEF_RUN = { running: false, paused: false, index: -1, nextAt: 0, remainingMs: 0, token: 0, status: '' };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -38,8 +38,9 @@ async function updateBadge(run) {
   await chrome.action.setBadgeBackgroundColor({ color: run.paused ? '#b45309' : '#15803d' });
 }
 
-// Thời gian dừng (ms): ưu tiên { min, sec }, hỗ trợ dữ liệu cũ { value, unit }.
-const dwellMs = (it) => {
+// Thời gian dừng (ms). Chế độ 'all' -> dùng thời gian chung; ngược lại ưu tiên { min, sec }, hỗ trợ dữ liệu cũ { value, unit }.
+const dwellMs = (it, config) => {
+  if (config?.timeMode === 'all') return Math.max(1, (Number(config.globalMin) || 0) * 60 + (Number(config.globalSec) || 0)) * 1000;
   if (it.min != null || it.sec != null) return Math.max(1, (Number(it.min) || 0) * 60 + (Number(it.sec) || 0)) * 1000;
   return Math.max(1, Number(it.value) || 1) * (it.unit === 'min' ? 60000 : 1000);
 };
@@ -198,7 +199,7 @@ async function go(dir) {
       }
 
       selfUntil = Date.now() + 1500;
-      await startTimer(idx, dwellMs(item), notes.join(' · '));
+      await startTimer(idx, dwellMs(item, config), notes.join(' · '));
       return;
     }
     await stopRun('Không tab nào kích hoạt được');
@@ -233,7 +234,7 @@ async function resume() {
   try { if (item) await activateAndVerify(item.tabId); }
   finally { busy = false; selfUntil = Date.now() + 1500; }
   await patchRun({ paused: false, status: '' });
-  await startTimer(run.index, run.remainingMs > 0 ? run.remainingMs : item ? dwellMs(item) : 1000, '');
+  await startTimer(run.index, run.remainingMs > 0 ? run.remainingMs : item ? dwellMs(item, config) : 1000, '');
 }
 
 async function stopRun(status = '') {
