@@ -11,7 +11,7 @@ A Chrome extension that **automatically rotates through your browser tabs**, sta
 ### What does it do?
 
 1. You pick which open tabs to include and put them in order.
-2. For each tab you set how long to stay there (minutes + seconds, e.g. **1 min 30 s**).
+2. Set how long to stay on each tab (minutes + seconds, e.g. **1 min 30 s**) — either **one time for all tabs**, or **a different time per tab**.
 3. Optionally, you choose a spot on that page to be clicked automatically (e.g. a "Refresh" or "Stay logged in" button).
 4. Press **Start**. The extension switches to tab 1, clicks your spot, waits, moves to tab 2, and so on. When it reaches the end it starts over (or stops — your choice).
 
@@ -38,6 +38,7 @@ Click the toolbar icon to open the panel. The interface is in Vietnamese; here i
 | **Dừng** | Stop completely |
 | **⏮ / ⏭** | Go to previous / next tab now |
 | **Chuỗi chạy** | Your sequence (the tabs that will rotate) |
+| **Thời gian dừng: Riêng từng tab / Chung cho tất cả** | Dwell time: per tab / same for all tabs |
 | **Tab đang mở** → **+ Thêm** | Open tabs → Add to sequence |
 | **Dừng _ phút _ giây** | Stay for _ minutes _ seconds |
 | **Nhấp** (checkbox) | Click automatically on this tab |
@@ -49,7 +50,11 @@ Click the toolbar icon to open the panel. The interface is in Vietnamese; here i
 **Step by step:**
 
 1. Under **Tab đang mở**, click **+ Thêm** next to each tab you want.
-2. In **Chuỗi chạy**, set the minutes and seconds for each tab. Use ↑ ↓ to reorder.
+2. Choose the time mode:
+   - **Chung cho tất cả** (same for all) — enter minutes and seconds once; every tab uses it.
+   - **Riêng từng tab** (per tab) — set minutes and seconds on each tab's row.
+   
+   Switching modes never erases your per-tab times. Use ↑ ↓ to reorder tabs.
 3. To auto-click: press **Chọn điểm**. The tab opens with a blue overlay — click the exact spot you want. A red dot confirms it was saved. Press **Esc** to cancel.
 4. Press **Bắt đầu** (Start).
 
@@ -116,7 +121,10 @@ config = {
     click: { x, y, w, h, xPct, yPct } | null
   }],
   loop: true,
-  autoPause: true
+  autoPause: true,
+  timeMode: 'each',          // 'each' = per-tab min/sec, 'all' = globalMin/globalSec for every tab
+  globalMin: 0,
+  globalSec: 30
 }
 
 run = {
