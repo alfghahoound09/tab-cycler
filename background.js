@@ -38,14 +38,21 @@ async function updateBadge(run) {
   await chrome.action.setBadgeBackgroundColor({ color: run.paused ? '#b45309' : '#15803d' });
 }
 
-// Thời gian dừng (ms). Chế độ 'all' -> dùng thời gian chung; ngược lại ưu tiên { min, sec }, hỗ trợ dữ liệu cũ { value, unit }.
-const dwellMs = (it, config) => {
-  if (config?.timeMode === 'all') return Math.max(1, (Number(config.globalMin) || 0) * 60 + (Number(config.globalSec) || 0)) * 1000;
-  if (it.min != null || it.sec != null) return Math.max(1, (Number(it.min) || 0) * 60 + (Number(it.sec) || 0)) * 1000;
-  return Math.max(1, Number(it.value) || 1) * (it.unit === 'min' ? 60000 : 1000);
+// Phút + giây -> tổng giây, tối thiểu 1 giây.
+const toSec = (m, s) => Math.max(1, (Number(m) || 0) * 60 + (Number(s) || 0));
+// Thời gian dừng riêng của tab (giây): ưu tiên { min, sec }, hỗ trợ dữ liệu cũ { value, unit }.
+const dwellSec = (it) => {
+  if (it.min != null || it.sec != null) return toSec(it.min, it.sec);
+  return Math.max(1, Number(it.value) || 1) * (it.unit === 'min' ? 60 : 1);
 };
+// Thời gian dừng (ms). Chế độ 'all' -> dùng thời gian chung; ngược lại dùng thời gian riêng của tab.
+const dwellMs = (it, config) =>
+  (config?.timeMode === 'all' ? toSec(config.globalMin, config.globalSec) : dwellSec(it)) * 1000;
 
 // ---------- offscreen timer ----------
+// Gửi lệnh tới offscreen; bỏ qua lỗi khi document chưa tồn tại.
+const toOffscreen = (msg) => chrome.runtime.sendMessage({ target: 'offscreen', ...msg }).catch(() => {});
+
 async function ensureOffscreen() {
   const ctx = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] });
   if (ctx.length) return;
@@ -62,7 +69,7 @@ async function ensureOffscreen() {
 
 async function stopTimers() {
   await chrome.alarms.clear('due');
-  try { await chrome.runtime.sendMessage({ target: 'offscreen', type: 'stop' }); } catch {}
+  await toOffscreen({ type: 'stop' });
 }
 
 async function startTimer(index, ms, status = '') {
@@ -75,12 +82,20 @@ async function startTimer(index, ms, status = '') {
   const nextAt = Date.now() + ms;
   await patchRun({ running: true, index, nextAt, token, remainingMs: 0, status });
   await ensureOffscreen();
-  try { await chrome.runtime.sendMessage({ target: 'offscreen', type: 'start', ms, token }); } catch {}
+  await toOffscreen({ type: 'start', ms, token });
   // Alarm dự phòng: nếu timer của offscreen bị trễ/mất thì alarm vẫn đẩy tiếp.
   await chrome.alarms.create('due', { when: nextAt + 1000 });
 }
 
 // ---------- kích hoạt + xác minh tab ----------
+// Bọc thao tác tự chuyển tab để tabs.onActivated không coi đó là người dùng đổi tab.
+async function asSelf(fn) {
+  busy = true;
+  selfUntil = Date.now() + 3000;
+  try { return await fn(); }
+  finally { busy = false; selfUntil = Date.now() + 1500; }
+}
+
 async function waitComplete(tabId, timeout = 15000) {
   const end = Date.now() + timeout;
   while (Date.now() < end) {
@@ -175,11 +190,9 @@ async function go(dir) {
   const n = items.length;
   if (!n) return stopRun('Chưa có tab nào trong chuỗi');
 
-  const notes = [];
-  let idx = run.index;
-  busy = true;
-  selfUntil = Date.now() + 3000;
-  try {
+  return asSelf(async () => {
+    const notes = [];
+    let idx = run.index;
     for (let k = 0; k < n; k++) {
       idx += dir;
       if (idx >= n) {
@@ -198,15 +211,11 @@ async function go(dir) {
         catch (e) { notes.push(`Tab ${idx + 1} không nhấp được: ${String(e.message).slice(0, 80)}`); }
       }
 
-      selfUntil = Date.now() + 1500;
       await startTimer(idx, dwellMs(item, config), notes.join(' · '));
       return;
     }
     await stopRun('Không tab nào kích hoạt được');
-  } finally {
-    busy = false;
-    selfUntil = Date.now() + 1500;
-  }
+  });
 }
 
 async function startRun() {
@@ -229,10 +238,7 @@ async function resume() {
   const { config, run } = await getState();
   if (!run.running || !run.paused) return;
   const item = config.items[run.index];
-  busy = true;
-  selfUntil = Date.now() + 3000;
-  try { if (item) await activateAndVerify(item.tabId); }
-  finally { busy = false; selfUntil = Date.now() + 1500; }
+  if (item) await asSelf(() => activateAndVerify(item.tabId));
   await patchRun({ paused: false, status: '' });
   await startTimer(run.index, run.remainingMs > 0 ? run.remainingMs : item ? dwellMs(item, config) : 1000, '');
 }
@@ -306,14 +312,17 @@ async function startPick(tabId) {
 }
 
 // ---------- lệnh từ popup / phím tắt ----------
+// next/prev: chỉ bước khi đang chạy.
+const step = (dir) => enqueue(async () => { const { run } = await getState(); if (run.running) await go(dir); });
+
 function handleCmd(cmd) {
   switch (cmd) {
     case 'start': return enqueue(startRun);
     case 'pause': return enqueue(() => pause('Tạm dừng'));
     case 'resume': return enqueue(resume);
     case 'stop': return enqueue(() => stopRun('Đã dừng'));
-    case 'next': return enqueue(async () => { const { run } = await getState(); if (run.running) await go(1); });
-    case 'prev': return enqueue(async () => { const { run } = await getState(); if (run.running) await go(-1); });
+    case 'next': return step(1);
+    case 'prev': return step(-1);
   }
 }
 
@@ -345,14 +354,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       });
       break;
     case 'offscreenReady':
-      getState().then(async ({ run }) => {
+      getState().then(({ run }) => {
         if (run.running && !run.paused && run.nextAt) {
-          try {
-            await chrome.runtime.sendMessage({
-              target: 'offscreen', type: 'start',
-              ms: Math.max(0, run.nextAt - Date.now()), token: run.token,
-            });
-          } catch {}
+          toOffscreen({ type: 'start', ms: Math.max(0, run.nextAt - Date.now()), token: run.token });
         }
       });
       break;
