@@ -1,8 +1,6 @@
 # Tab Cycler
 
-A Chrome extension that **automatically rotates through your browser tabs**, stays on each one for as long as you choose, and can **click a spot on the page for you** every time it arrives.
-
-> Typical use: keep several dashboards, admin panels or web apps "alive" so they don't log you out from inactivity, or show a rotating set of pages on a monitor.
+A Chrome extension that automatically rotates tab to get rid of boredom while studying vnu-lms, it just simply do that :)
 
 ---
 

@@ -27,15 +27,15 @@ const fmt = (s) => {
   if (ss || !parts.length) parts.push(ss + 's');
   return parts.join(' ');
 };
+// Phút + giây -> tổng giây, tối thiểu 1 giây. (Giống toSec trong background.js — sửa cả hai.)
+const toSec = (m, s) => Math.max(1, (Number(m) || 0) * 60 + (Number(s) || 0));
 // Thời gian dừng (giây). Hỗ trợ cả dữ liệu cũ dạng { value, unit }.
 const dwellSec = (it) => {
-  if (it.min != null || it.sec != null) return Math.max(1, (Number(it.min) || 0) * 60 + (Number(it.sec) || 0));
+  if (it.min != null || it.sec != null) return toSec(it.min, it.sec);
   return Math.max(1, Number(it.value) || 1) * (it.unit === 'min' ? 60 : 1);
 };
 // Thời gian thực tế áp dụng cho tab (theo chế độ hiện tại).
-const effSec = (it) => config.timeMode === 'all'
-  ? Math.max(1, (Number(config.globalMin) || 0) * 60 + (Number(config.globalSec) || 0))
-  : dwellSec(it);
+const effSec = (it) => config.timeMode === 'all' ? toSec(config.globalMin, config.globalSec) : dwellSec(it);
 // Chuẩn hóa phút + giây: 0p 90s -> 1p 30s; tối thiểu 1 giây.
 const normTime = (m, s) => {
   const total = Math.max(1, Math.max(0, Math.floor(Number(m) || 0)) * 60 + Math.max(0, Math.floor(Number(s) || 0)));
