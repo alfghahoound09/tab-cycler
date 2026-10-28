@@ -4,6 +4,12 @@ A Chrome extension that automatically rotates tab to get rid of boredom while st
 
 ---
 
+## Video Tutorial
+
+[![Tutor Video](https://img.youtube.com/vi/Aylf49PN4Ls/maxresdefault.jpg)](https://www.youtube.com/watch?v=Aylf49PN4Ls)
+
+<iframe width="1600" height="596" src="https://www.youtube.com/embed/Aylf49PN4Ls" title="tutor video" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+
 ## Part 1 — For everyone (no technical knowledge needed)
 
 ### What does it do?
