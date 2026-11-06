@@ -140,7 +140,7 @@ Esc -> {type:'pickCancelled'}  (no handler in background — ignored)
 Run stays **paused** after picking; user must resume manually.
 
 ### 5.5 Auto-pause & tab-closed
-- `tabs.onActivated`: ignored if `busy` or `now < selfUntil`; otherwise if running, not paused, `autoPause` on, and activated tab ≠ current item → `pause('Tự tạm dừng: bạn vừa đổi tab')`.
+- `tabs.onActivated`: ignored if `busy`, `now < selfUntil`, or `tabId === switchingTabId`; inside `enqueue()`, if running, not paused, `autoPause` on, activated tab ≠ current item, **and** in the same window as the current item → `pause('Tự tạm dừng: bạn vừa đổi tab')`.
 - `tabs.onRemoved`: if the closed tab is the current item → `go(1)` immediately.
 
 ### 5.6 Lifecycle
@@ -172,7 +172,7 @@ Offscreen ignores any message without `target === 'offscreen'`; background ignor
 | Name | Purpose |
 |---|---|
 | `chain` / [`enqueue(fn)`](file:///d:/tab-cycler/background.js#L10-L11) | Promise chain serializing **all** state-changing work. Errors logged with `[TabCycler]`. |
-| `busy`, `selfUntil` | In-memory guards so own tab switches don't trigger auto-pause. Only touch them via `asSelf()` (or `startPick`). |
+| `busy`, `selfUntil`, `switchingTabId` | In-memory guards so own tab switches don't trigger auto-pause. Only touch them via `asSelf()` / `activateAndVerify()` (or `startPick`). |
 | `sleep(ms)` | Promise delay. |
 
 **State helpers**
@@ -196,11 +196,12 @@ Offscreen ignores any message without `target === 'offscreen'`; background ignor
 **Tab activation & clicking**
 | Function | Lines | Description |
 |---|---|---|
-| [`asSelf(fn)`](file:///d:/tab-cycler/background.js#L92-L97) | 92–97 | Runs `fn` with `busy=true`, `selfUntil=now+3s`; on finish `busy=false`, `selfUntil=now+1.5s`. Wrap any self-initiated tab switch with it. |
-| [`waitComplete(tabId, timeout)`](file:///d:/tab-cycler/background.js#L99-L107) | 99–107 | Polls every 300ms until tab `complete` and not discarded (15s default). |
-| [`checkVisible(tabId)`](file:///d:/tab-cycler/background.js#L109-L119) | 109–119 | Injects `document.visibilityState==='visible'`; returns `null` if not injectable (chrome:// etc.). |
-| [`activateAndVerify(tabId)`](file:///d:/tab-cycler/background.js#L122-L151) | 122–151 | Up to 5 attempts: focus/unminimize window, activate tab, verify active, wait load, verify visible. Returns `{ok, note}`; `tab đã đóng` if tab gone. |
-| [`realClick(tabId, p)`](file:///d:/tab-cycler/background.js#L154-L184) | 154–184 | Attach debugger 1.3, read viewport; if width ≈ saved (±2px) use pixel `x,y` (y clamped), else scale `xPct/yPct`. Dispatch `mouseMoved → mousePressed → mouseReleased`. Always detaches. |
+| [`asSelf(fn)`](file:///d:/tab-cycler/background.js#L93-L102) | 93–102 | Runs `fn` with `busy=true`, `selfUntil=now+10s`; on finish `busy=false`, `switchingTabId=null`, `selfUntil=now+1.5s`. Wrap any self-initiated tab switch with it. |
+| [`keepPageActiveMain()`](file:///d:/tab-cycler/background.js#L105-L121) / [`ensureKeepActive(tabId)`](file:///d:/tab-cycler/background.js#L123-L131) | 105–131 | Injected into `MAIN` world (all frames) to keep `document.visibilityState==='visible'`, `document.hidden===false`, `document.hasFocus()===true` and suppress `visibilitychange`/`blur`/`focusout`/`pagehide`/`freeze` events. |
+| [`waitComplete(tabId, timeout)`](file:///d:/tab-cycler/background.js#L133-L141) | 133–141 | Polls every 300ms until tab `complete` and not discarded (15s default). |
+| [`checkVisible(tabId)`](file:///d:/tab-cycler/background.js#L143-L153) | 143–153 | Injects `document.visibilityState==='visible'`; returns `null` if not injectable (chrome:// etc.). |
+| [`activateAndVerify(tabId)`](file:///d:/tab-cycler/background.js#L156-L189) | 156–189 | Up to 5 attempts: unminimize window (without stealing OS focus), activate tab, verify active, wait load, inject keep-active hook, verify visible. Returns `{ok, note}`; `tab đã đóng` if tab gone. |
+| [`realClick(tabId, p)`](file:///d:/tab-cycler/background.js#L192-L224) | 192–224 | Attach debugger 1.3, enable CDP focus emulation & active web lifecycle, read viewport; if width ≈ saved (±2px) use pixel `x,y` (y clamped), else scale `xPct/yPct`. Dispatch `mouseMoved → mousePressed → mouseReleased`. Always detaches. |
 
 **Run control**
 | Function | Lines | Description |
