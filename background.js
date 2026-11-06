@@ -12,6 +12,7 @@ const enqueue = (fn) => (chain = chain.then(fn).catch((e) => console.error('[Tab
 
 let busy = false;      // đang tự chuyển tab
 let selfUntil = 0;     // mốc thời gian đến khi bỏ qua sự kiện onActivated do chính mình gây ra
+let switchingTabId = null; // tabId đang được extension chủ động kích hoạt (chống race với onActivated)
 
 // ---------- state ----------
 async function getState() {
@@ -91,9 +92,43 @@ async function startTimer(index, ms, status = '') {
 // Bọc thao tác tự chuyển tab để tabs.onActivated không coi đó là người dùng đổi tab.
 async function asSelf(fn) {
   busy = true;
-  selfUntil = Date.now() + 3000;
+  selfUntil = Date.now() + 10000;
   try { return await fn(); }
-  finally { busy = false; selfUntil = Date.now() + 1500; }
+  finally {
+    busy = false;
+    switchingTabId = null;
+    selfUntil = Date.now() + 1500;
+  }
+}
+
+// Giữ trang luôn ở trạng thái visible & focused ngay cả khi bạn đang dùng app khác hoặc chuyển sang tab kế tiếp.
+function keepPageActiveMain() {
+  if (window.__tcKeepActive) return;
+  window.__tcKeepActive = true;
+  try {
+    Object.defineProperty(document, 'visibilityState', { get: () => 'visible', configurable: true });
+    Object.defineProperty(document, 'hidden', { get: () => false, configurable: true });
+    Object.defineProperty(document, 'webkitVisibilityState', { get: () => 'visible', configurable: true });
+    Object.defineProperty(document, 'webkitHidden', { get: () => false, configurable: true });
+    document.hasFocus = () => true;
+    const stop = (e) => { e.stopImmediatePropagation(); e.stopPropagation(); };
+    for (const ev of ['visibilitychange', 'webkitvisibilitychange', 'blur', 'focusout', 'pagehide', 'freeze']) {
+      window.addEventListener(ev, stop, true);
+      document.addEventListener(ev, stop, true);
+    }
+    window.dispatchEvent(new Event('focus'));
+    document.dispatchEvent(new Event('visibilitychange'));
+  } catch {}
+}
+
+async function ensureKeepActive(tabId) {
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      world: 'MAIN',
+      func: keepPageActiveMain,
+    });
+  } catch {}
 }
 
 async function waitComplete(tabId, timeout = 15000) {
@@ -121,26 +156,33 @@ async function checkVisible(tabId) {
 // Trả về { ok, note }
 async function activateAndVerify(tabId) {
   let lastNote = '';
+  switchingTabId = tabId;
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
+      selfUntil = Date.now() + 5000;
       let tab = await chrome.tabs.get(tabId);
       const win = await chrome.windows.get(tab.windowId);
-      const upd = { focused: true };
-      if (win.state === 'minimized') upd.state = 'normal';
-      await chrome.windows.update(tab.windowId, upd);
+      // Không dùng focused: true để tránh cướp focus khi người dùng đang làm việc ở app/cửa sổ khác.
+      // Chỉ khôi phục nếu cửa sổ đang bị thu nhỏ (minimized).
+      if (win.state === 'minimized') {
+        try { await chrome.windows.update(tab.windowId, { state: 'normal' }); } catch {}
+      }
       await chrome.tabs.update(tabId, { active: true });
       await sleep(300);
 
       tab = await chrome.tabs.get(tabId);
-      const w2 = await chrome.windows.get(tab.windowId);
-      if (!tab.active || w2.state === 'minimized') { lastNote = 'tab chưa active'; await sleep(400); continue; }
+      if (!tab.active) { lastNote = 'tab chưa active'; await sleep(400); continue; }
 
       if (tab.discarded || tab.status === 'loading') await waitComplete(tabId);
 
-      const vis = await checkVisible(tabId);
-      if (vis === false) { lastNote = 'trang chưa visible'; await sleep(400); continue; }
+      await ensureKeepActive(tabId);
 
-      return { ok: true, note: w2.focused ? '' : 'cửa sổ chưa nhận focus hệ thống' };
+      const vis = await checkVisible(tabId);
+      const w2 = await chrome.windows.get(tab.windowId).catch(() => null);
+      const isMin = w2 && w2.state === 'minimized';
+      if (vis === false && !isMin) { lastNote = 'trang chưa visible'; await sleep(400); continue; }
+
+      return { ok: true, note: isMin ? 'cửa sổ đang thu nhỏ (vẫn giữ active ngầm)' : '' };
     } catch (e) {
       if (/No tab with id/i.test(String(e.message))) return { ok: false, note: 'tab đã đóng' };
       lastNote = String(e.message);
@@ -155,6 +197,8 @@ async function realClick(tabId, p) {
   const target = { tabId };
   await chrome.debugger.attach(target, '1.3');
   try {
+    await chrome.debugger.sendCommand(target, 'Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {});
+    await chrome.debugger.sendCommand(target, 'Page.setWebLifecycleState', { state: 'active' }).catch(() => {});
     await sleep(250); // chờ thanh cảnh báo debug (nếu có) ổn định layout
     const r = await chrome.debugger.sendCommand(target, 'Runtime.evaluate', {
       expression: '({w: innerWidth, h: innerHeight})',
@@ -214,7 +258,17 @@ async function go(dir) {
       await startTimer(idx, dwellMs(item, config), notes.join(' · '));
       return;
     }
-    await stopRun('Không tab nào kích hoạt được');
+    // Nếu có ít nhất 1 tab còn sống (chưa đóng) nhưng tạm thời chưa sẵn sàng (vd đang kéo thả tab),
+    // đừng dừng hẳn mà hẹn thử lại sau 3 giây; chỉ dừng khi bấm nút Dừng hoặc mọi tab đều đã đóng.
+    let anyOpen = false;
+    for (const it of items) {
+      try { await chrome.tabs.get(it.tabId); anyOpen = true; break; } catch {}
+    }
+    if (anyOpen) {
+      await startTimer(Math.max(0, run.index), 3000, notes.join(' · ') || 'Đang thử lại...');
+      return;
+    }
+    await stopRun('Không còn tab nào mở trong chuỗi');
   });
 }
 
@@ -383,13 +437,24 @@ chrome.commands.onCommand.addListener(async (command) => {
 });
 
 // Người dùng tự đổi tab -> tự tạm dừng (nếu bật).
-chrome.tabs.onActivated.addListener(async ({ tabId }) => {
-  if (busy || Date.now() < selfUntil) return;
-  const { config, run } = await getState();
-  if (!run.running || run.paused || !config.autoPause) return;
-  const cur = config.items[run.index];
-  if (cur && cur.tabId === tabId) return;
-  enqueue(() => pause('Tự tạm dừng: bạn vừa đổi tab'));
+// Chỉ bắt sự kiện trên cùng cửa sổ với tab đang chạy và đưa vào enqueue() để chống race condition.
+chrome.tabs.onActivated.addListener(({ tabId, windowId }) => {
+  if (busy || Date.now() < selfUntil || tabId === switchingTabId) return;
+  enqueue(async () => {
+    if (busy || Date.now() < selfUntil || tabId === switchingTabId) return;
+    const { config, run } = await getState();
+    if (!run.running || run.paused || !config.autoPause) return;
+    const cur = config.items[run.index];
+    if (!cur || cur.tabId === tabId) return;
+    try {
+      const curTab = await chrome.tabs.get(cur.tabId);
+      // Nếu người dùng đổi tab ở một cửa sổ Chrome khác -> bỏ qua, không tạm dừng.
+      if (curTab.windowId !== windowId) return;
+    } catch {
+      return;
+    }
+    await pause('Tự tạm dừng: bạn vừa đổi tab');
+  });
 });
 
 // Tab đang treo bị đóng -> sang tab kế ngay.
